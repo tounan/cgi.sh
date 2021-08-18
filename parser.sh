@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# log to stderr
+err() { printf "%s\n" "$*" >&2; }
+
+# deletes only trailing CRLF
 function trim_crlf {
         if [ $# -eq 1 ]
         then
@@ -9,10 +13,9 @@ function trim_crlf {
         fi
 }
 
+# save _GET from query string
 function parse_query {
         local query_string="$1"
-        declare -A _GET
-
         local query_lines=$(echo "$query_string" | tr "&" "\n")
         while true
         do
@@ -23,8 +26,7 @@ function parse_query {
                 then
                         local key=$(echo "$pair" | cut -d "=" -f 1)
                         local value=$(echo "$pair" | cut -d "=" -f 2-)
-
-                        echo "$key => $value"
+                        err "\$_GET[$key] = $value"
                         _GET[$key]="$value"
                 else
                         break
@@ -32,10 +34,9 @@ function parse_query {
         done <<< "$query_lines"
 }
 
-function parse_body {
+# save _POST from body
+function read_body {
         local query_string="$1"
-        declare -A _POST
-
         local query_lines=$(echo "$query_string" | tr "&" "\n")
         while true
         do
@@ -46,8 +47,7 @@ function parse_body {
                 then
                         local key=$(echo "$pair" | cut -d "=" -f 1)
                         local value=$(echo "$pair" | cut -d "=" -f 2-)
-
-                        echo "$key => $value"
+                        err "\$_POST[$key] = $value"
                         _POST[$key]="$value"
                 else
                         break
@@ -55,8 +55,12 @@ function parse_body {
         done <<< "$query_lines"
 }
 
-function parse_first {
-        local first=$(trim_crlf "$1" | tr -s " ")
+# save _METHOD _PATH _QUERY
+# and parse _QUERY
+function read_first {
+        read first_line
+        local first=$(trim_crlf "$first_line" | tr -s " ")
+        unset first_line
         local method=$(echo "$first" | cut -d " " -f 1)
         local uri=$(echo "$first" | cut -d " " -f 2)
         local sig=$(echo "$first" | cut -d " " -f 3)
@@ -69,39 +73,36 @@ function parse_first {
                 local path="$uri"
                 local query=""
         fi
+
+        err "M=$method P=$path Q=$query"
+        _METHOD="$method"
+        _PATH="$path"
+        _QUERY="$query"
+        
         parse_query "$query"
-
-        echo "method: $method"
-        echo "path: $path"
-        echo "query: $query"
 }
 
-function parse_header {
-        local header_line="$1"
-        local name=$(echo "$header_line" | cut -d ":" -f 1)
-        # remove leading space
-        local value=$(echo "$header_line" | cut -d ":" -f 2- | sed 's/^ //')
+# save _HEAD from headers
+function read_headers {
+        while true
+        do
+                read header_line
+                header_line=$(trim_crlf "$header_line")
 
-        echo "header $name => $value"
+                if [ -n "$header_line" ]
+                then
+                        local name=$(echo "$header_line" | cut -d ":" -f 1)
+                        # remove leading whitespace
+                        local value=$(echo "$header_line" | cut -d ":" -f 2- | sed 's/^ //')
+                        err "\$_HEAD[$name] = $value"
+                        _HEAD[$name]="$value"
+                else
+                        break
+                fi
+        done
+        unset header_line
 }
 
-read first_line
-parse_first "$first_line"
-unset first_line
-
-# reading the request
-while true
-do
-        read header_line
-        header_line=$(trim_crlf "$header_line")
-
-        if [ -n "$header_line" ]
-        then
-                parse_header "$header_line"
-        else
-                break
-        fi
-done
-unset header_line
-
-# pass the rest to application
+declare -A _HEAD
+declare -A _GET
+declare -A _POST
